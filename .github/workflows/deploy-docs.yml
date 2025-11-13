@@ -1,0 +1,58 @@
+name: Deploy Docs to GitHub Pages
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'README.md'
+      - 'CHANGELOG.md'
+      - 'docs/**'
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v4
+
+      - name: Build docs
+        run: |
+          mkdir -p _site
+          cp README.md _site/index.md
+          cp CHANGELOG.md _site/changelog.md
+          # Converter Markdown para HTML
+          echo '<!DOCTYPE html>
+          <html>
+          <head>
+            <meta charset="UTF-8">
+            <title>DRIFRR - Multiplayer Drift Racing</title>
+            <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/github-markdown-css/github-markdown.min.css">
+            <style>
+              .markdown-body { box-sizing: border-box; min-width: 200px; max-width: 980px; margin: 0 auto; padding: 45px; }
+            </style>
+          </head>
+          <body>
+            <div class="markdown-body" id="content"></div>
+            <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+            <script>
+              fetch("index.md")
+                .then(r => r.text())
+                .then(md => {
+                  document.getElementById("content").innerHTML = marked.parse(md);
+                });
+            </script>
+          </body>
+          </html>' > _site/index.html
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+
+      - name: Deploy to GitHub Pages
+        uses: actions/deploy-pages@v4
