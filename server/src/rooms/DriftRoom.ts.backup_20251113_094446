@@ -1,0 +1,756 @@
+import { Client, Room } from "colyseus";
+import { MESSAGE, InputPayload, NamePayload, StartMatchPayload, PlayerReadyPayload, PositionPayload } from "../messages";
+import { DriftState, Player } from "../schema/State";
+import crypto from "crypto"; // CRITICAL FIX #4: For secure seed generation
+
+const SIMULATION_RATE = 1000 / 30; // 30 ticks por segundo
+const BASE_SPEED = 19; // unidades por segundo (alinhado com cliente)
+const YAW_ACCELERATION = 2.8; // variação de yaw quando drifting (mais responsivo)
+const YAW_RECOVERY = 5.5; // fator de recuperação quando não driftando (mais rápido)
+const TRACK_HALF_WIDTH = 5.8; // largura da pista
+const MATCH_CAPACITY = 5;
+const MIN_PLAYERS_PRIVATE = 2; // mínimo para partidas privadas
+const MIN_PLAYERS_PUBLIC = 5; // mínimo para partidas públicas (sala cheia)
+const MATCH_DURATION_MS = 120_000;
+const COUNTDOWN_SECONDS = 5;
+const PUBLIC_BETS = [2, 5, 25];
+const PLATFORM_FEE_RATE = 0.10;
+const MAX_STEERING_DELTA_PER_INPUT = 0.6; // CRITICAL FIX #1: Anti-cheat - máxima mudança de steering por input
+const MIN_INPUT_INTERVAL_MS = 1000 / 60; // CRITICAL FIX #1: Anti-cheat - 60 inputs/sec máximo
+
+interface DriftRoomOptions {
+  queueType?: "public" | "private";
+  betAmount?: number;
+  inviteCode?: string;
+  host?: boolean;
+  platformUserId?: string;
+  displayName?: string;
+}
+
+export class DriftRoom extends Room<DriftState> {
+  private countdownTimer?: NodeJS.Timeout;
+  private countdownRemaining = 0;
+  private matchStartTimestamp = 0;
+  private matchTimeout?: NodeJS.Timeout;
+  private hostSessionId?: string;
+  private queueType: "public" | "private" = "public";
+  private lastInputTime: Map<string, number> = new Map(); // FIX #10: Rate limiting
+  private lastSteeringValue: Map<string, number> = new Map(); // CRITICAL FIX #1: Track last steering for anti-cheat
+
+  onCreate(options: DriftRoomOptions = {}): void {
+    this.maxClients = MATCH_CAPACITY;
+    this.setPatchRate(1000 / 18);
+    this.queueType = options.queueType === "private" ? "private" : "public";
+
+    const betAmount = this.resolveBetAmount(options.betAmount);
+    // CRITICAL FIX #4: Generate truly unique seed using crypto
+    const uniqueSeed = this.generateUniqueSeed();
+    const inviteCode = this.queueType === "private"
+      ? this.normalizeInvite(options.inviteCode) ?? this.generateInviteCode()
+      : "";
+
+    const state = new DriftState();
+    state.betAmount = betAmount;
+    state.prizePool = 0;
+    state.roomType = this.queueType;
+    state.inviteCode = inviteCode;
+    state.status = "waiting";
+    state.countdown = 0;
+    state.playerCount = 0;
+    state.hostId = "";
+    state.seed = uniqueSeed;
+    this.setState(state);
+
+    // FIX #9: Fixed timestep para física consistente
+    this.setSimulationInterval((deltaTime) => this.updatePlayers(SIMULATION_RATE / 1000), SIMULATION_RATE);
+    this.refreshEconomicState();
+    this.updateMetadata();
+
+    this.onMessage(MESSAGE.INPUT, (client, payload) => this.handleInput(client, payload));
+    this.onMessage(MESSAGE.NAME, (client, payload) => this.handleName(client, payload));
+    this.onMessage(MESSAGE.START_MATCH, (client, payload) => this.handleStartMatch(client, payload));
+    this.onMessage(MESSAGE.PLAYER_READY, (client, payload) => this.handlePlayerReady(client, payload));
+    this.onMessage(MESSAGE.POSITION_UPDATE, (client, payload) => this.handlePositionUpdate(client, payload));
+  }
+
+  onAuth(_client: Client, options: DriftRoomOptions = {}): boolean {
+    const queueType = options.queueType === "private" ? "private" : "public";
+    console.debug('[drift-room] onAuth', {
+      queueType,
+      expectedQueue: this.queueType,
+      hostSessionId: this.hostSessionId,
+      roomInvite: this.state.inviteCode,
+      incomingInvite: options.inviteCode,
+      betAmount: options.betAmount,
+      hostFlag: options.host
+    });
+    if (queueType !== this.queueType) {
+      return false;
+    }
+
+    if (this.queueType === "public") {
+      return this.resolveBetAmount(options.betAmount) === this.state.betAmount;
+    }
+
+    if (!this.hostSessionId && options.host) {
+      return true;
+    }
+
+    const invite = this.normalizeInvite(options.inviteCode);
+    return invite !== undefined && invite === this.state.inviteCode;
+  }
+
+  onJoin(client: Client, options: DriftRoomOptions = {}): void {
+    console.debug('[drift-room] onJoin', {
+      sessionId: client.sessionId,
+      existingPlayers: this.clients.length,
+      options
+    });
+    const player = new Player();
+    player.id = client.sessionId;
+    const trimmedName = options.displayName?.toString().trim();
+    player.name = trimmedName && trimmedName.length > 0
+      ? trimmedName.slice(0, 20)
+      : `Driver-${client.sessionId.substring(0, 4)}`;
+    player.opacity = 1;
+    player.betAmount = this.state.betAmount;
+    player.platformId = options.platformUserId ?? "";
+    this.state.players.set(client.sessionId, player);
+
+    console.log('[drift-room] Player added to MapSchema:', {
+      sessionId: client.sessionId,
+      name: player.name,
+      totalPlayers: this.state.players.size,
+      playerIds: Array.from(this.state.players.keys()),
+      queueType: this.queueType
+    });
+
+    if (this.queueType === "private" && !this.hostSessionId) {
+      this.hostSessionId = client.sessionId;
+      this.state.hostId = client.sessionId;
+    }
+
+    this.state.playerCount = this.clients.length;
+    this.refreshEconomicState();
+    client.send("seed", { seed: this.state.seed });
+
+    this.emitLobbyInfo();
+    this.emitLobbyInfo(client);
+    this.updateMetadata();
+    this.scheduleStartIfReady();
+  }
+
+  onLeave(client: Client): void {
+    console.debug('[drift-room] onLeave', {
+      sessionId: client.sessionId,
+      wasHost: this.hostSessionId === client.sessionId,
+      currentStatus: this.state.status
+    });
+    const player = this.state.players.get(client.sessionId);
+
+    // MUDANÇA: Durante partida ativa, NÃO eliminar - carro continua em auto-pilot
+    if (this.state.status === "active" && player) {
+      player.opacity = 0.5; // Visual indication of disconnected state
+      console.log('[drift-room] Player disconnected during active match - auto-pilot enabled', {
+        sessionId: client.sessionId,
+        name: player.name
+      });
+      // Don't delete player - they continue moving via server physics
+      // Only clean up tracking maps
+      this.lastInputTime.delete(client.sessionId);
+      this.lastSteeringValue.delete(client.sessionId);
+
+      // Update counts but don't remove player from game
+      this.state.playerCount = this.clients.length;
+      this.emitLobbyInfo();
+      this.updateMetadata();
+      return; // Exit early - don't delete player
+    }
+
+    this.state.players.delete(client.sessionId);
+
+    // CRITICAL FIX #3: Memory leak - clean up tracking maps when player leaves
+    this.lastInputTime.delete(client.sessionId);
+    this.lastSteeringValue.delete(client.sessionId);
+
+    // CRITICAL FIX #2: Race condition - only reassign host if not in active/finished match
+    if (this.queueType === "private" && this.hostSessionId === client.sessionId) {
+      // During active or finished match, host role is no longer needed
+      if (this.state.status === "active" || this.state.status === "finished") {
+        console.log('[drift-room] Host left during', this.state.status, '- clearing host (not reassigning)');
+        this.hostSessionId = undefined;
+        this.state.hostId = "";
+      } else {
+        // Only reassign host during waiting/loading/countdown phases
+        const nextHost = this.clients[0];
+        this.hostSessionId = nextHost?.sessionId ?? undefined;
+        this.state.hostId = this.hostSessionId ?? "";
+
+        if (nextHost) {
+          console.log('[drift-room] Host reassigned to:', nextHost.sessionId);
+        } else {
+          console.log('[drift-room] No players left, host cleared');
+        }
+      }
+    }
+
+    this.state.playerCount = this.clients.length;
+    this.refreshEconomicState();
+    this.emitLobbyInfo();
+    this.updateMetadata();
+
+    // FIX #3: Cancelar countdown/loading se não há jogadores suficientes
+    const minPlayers = this.queueType === "private" ? MIN_PLAYERS_PRIVATE : MIN_PLAYERS_PUBLIC;
+    if ((this.state.status === "countdown" || this.state.status === "loading") && this.clients.length < minPlayers) {
+      console.debug('[drift-room] Canceling match start - not enough players', {
+        current: this.clients.length,
+        required: minPlayers,
+        queueType: this.queueType,
+        currentStatus: this.state.status
+      });
+      this.clearCountdown();
+      this.state.status = "waiting";
+      this.state.countdown = 0;
+
+      // Reset ready state for remaining players
+      this.state.players.forEach((p) => {
+        p.ready = false;
+      });
+
+      this.updateMetadata();
+    }
+
+    if (this.state.status === "active") {
+      this.checkForWinner();
+    }
+  }
+
+  onDispose(): void {
+    this.clearCountdown();
+    if (this.matchTimeout) {
+      clearTimeout(this.matchTimeout);
+      this.matchTimeout = undefined;
+    }
+    // CRITICAL FIX #3: Clean up all tracking maps
+    this.lastInputTime.clear();
+    this.lastSteeringValue.clear();
+  }
+
+  private handleInput(client: Client, payload: InputPayload) {
+    const player = this.state.players.get(client.sessionId);
+    if (!player || this.state.status !== "active") {
+      return;
+    }
+
+    // FIX #10: Rate limiting - máximo 60 inputs por segundo
+    const now = Date.now();
+    const lastTime = this.lastInputTime.get(client.sessionId) || 0;
+
+    if (now - lastTime < MIN_INPUT_INTERVAL_MS) {
+      return; // Throttle input
+    }
+
+    this.lastInputTime.set(client.sessionId, now);
+
+    // CRITICAL FIX #1: Validate steering changes to prevent zig-zag cheating
+    const steering = typeof payload?.steering === "number" ? payload.steering : 0;
+    const clampedSteering = Math.max(-1, Math.min(1, steering));
+
+    const lastSteering = this.lastSteeringValue.get(client.sessionId) ?? 0;
+    const steeringDelta = Math.abs(clampedSteering - lastSteering);
+
+    // Anti-cheat: Reject suspiciously fast steering changes
+    if (steeringDelta > MAX_STEERING_DELTA_PER_INPUT) {
+      console.warn('[anti-cheat] Suspicious steering change detected', {
+        sessionId: client.sessionId,
+        delta: steeringDelta,
+        lastSteering,
+        newSteering: clampedSteering,
+        maxAllowed: MAX_STEERING_DELTA_PER_INPUT
+      });
+      return; // Reject this input
+    }
+
+    this.lastSteeringValue.set(client.sessionId, clampedSteering);
+
+    player.pressing = Boolean(payload?.pressing);
+    player.steering = clampedSteering;
+    const intensity = typeof payload?.intensity === "number" ? payload.intensity : Math.abs(player.steering);
+    player.steeringIntensity = Math.max(0, Math.min(1, intensity));
+  }
+
+  private handleName(client: Client, payload: NamePayload) {
+    const player = this.state.players.get(client.sessionId);
+    if (!player) {
+      return;
+    }
+    const trimmed = payload?.name?.toString().trim();
+    if (trimmed) {
+      player.name = trimmed.slice(0, 16);
+    }
+  }
+
+  private handlePlayerReady(client: Client, _payload: PlayerReadyPayload) {
+    const player = this.state.players.get(client.sessionId);
+    if (!player) {
+      return;
+    }
+
+    player.ready = true;
+    console.log('[drift-room] Player ready:', {
+      sessionId: client.sessionId,
+      name: player.name,
+      readyPlayers: Array.from(this.state.players.values()).filter(p => p.ready).length,
+      totalPlayers: this.state.players.size
+    });
+
+    if (this.state.status === "loading") {
+      this.checkAllPlayersReady();
+    }
+  }
+
+  private checkAllPlayersReady() {
+    const allPlayers = Array.from(this.state.players.values());
+    const readyPlayers = allPlayers.filter(p => p.ready);
+
+    console.log('[drift-room] Checking ready status:', {
+      ready: readyPlayers.length,
+      total: allPlayers.length,
+      status: this.state.status
+    });
+
+    if (readyPlayers.length === allPlayers.length && allPlayers.length >= 2) {
+      console.log('[drift-room] All players ready! Starting countdown...');
+      this.startCountdown(3);
+    }
+  }
+
+  private handlePositionUpdate(client: Client, payload: PositionPayload) {
+    const player = this.state.players.get(client.sessionId);
+    if (!player || this.state.status !== "active") {
+      return;
+    }
+
+    // Update player position from client-side physics
+    player.x = typeof payload.x === "number" ? payload.x : player.x;
+    player.y = typeof payload.y === "number" ? payload.y : player.y;
+    player.z = typeof payload.z === "number" ? payload.z : player.z;
+    player.yaw = typeof payload.yaw === "number" ? payload.yaw : player.yaw;
+    player.distance = typeof payload.distance === "number" ? payload.distance : player.distance;
+
+    // Check if player went out of bounds
+    if (Math.abs(player.z) > TRACK_HALF_WIDTH && !player.eliminated) {
+      player.eliminated = true;
+      player.pressing = false;
+      player.opacity = 0.2;
+      console.log('[drift-room] Player eliminated (client physics):', {
+        sessionId: client.sessionId,
+        name: player.name,
+        z: player.z
+      });
+      this.checkForWinner();
+    }
+  }
+
+  private handleStartMatch(client: Client, _payload: StartMatchPayload) {
+    if (this.state.status === "active" || this.state.status === "countdown") {
+      return;
+    }
+
+    const isHost = client.sessionId === this.hostSessionId;
+    console.debug('[drift-room] handleStartMatch', {
+      requester: client.sessionId,
+      isHost,
+      playerCount: this.clients.length,
+      status: this.state.status
+    });
+    if (this.queueType === "private" && isHost) {
+      if (this.clients.length >= MIN_PLAYERS_PRIVATE) {
+        this.state.status = "loading";
+        this.emitLobbyInfo();
+        this.updateMetadata();
+        console.log('[drift-room] Match starting - waiting for players to load scene...');
+      } else {
+        console.debug('[drift-room] Cannot start - not enough players', {
+          current: this.clients.length,
+          required: MIN_PLAYERS_PRIVATE
+        });
+      }
+      return;
+    }
+  }
+
+  private scheduleStartIfReady() {
+    if (this.state.status !== "waiting") {
+      return;
+    }
+
+    if (this.queueType === "public" && this.clients.length === MATCH_CAPACITY) {
+      this.state.status = "loading";
+      this.emitLobbyInfo();
+      this.updateMetadata();
+      return;
+    }
+
+    if (this.queueType === "private" && this.clients.length === MATCH_CAPACITY) {
+      this.state.status = "loading";
+      this.emitLobbyInfo();
+      this.updateMetadata();
+    }
+  }
+
+  private startCountdown(seconds: number) {
+    this.clearCountdown();
+    this.state.status = "countdown";
+    this.countdownRemaining = seconds;
+    this.state.countdown = seconds;
+    this.emitLobbyInfo();
+    this.updateMetadata();
+
+    this.countdownTimer = setInterval(() => {
+      this.countdownRemaining -= 1;
+      this.state.countdown = Math.max(0, this.countdownRemaining);
+
+      if (this.countdownRemaining <= 0) {
+        this.clearCountdown();
+        this.startMatch();
+      }
+    }, 1000);
+  }
+
+  private clearCountdown() {
+    if (this.countdownTimer) {
+      clearInterval(this.countdownTimer);
+      this.countdownTimer = undefined;
+    }
+  }
+
+  private startMatch() {
+    if (this.state.status === "active") {
+      return;
+    }
+
+    // Validar se há jogadores suficientes para iniciar
+    const minPlayers = this.queueType === "private" ? MIN_PLAYERS_PRIVATE : MIN_PLAYERS_PUBLIC;
+    if (this.clients.length < minPlayers) {
+      console.warn('[drift-room] Cannot start match - not enough players', {
+        current: this.clients.length,
+        required: minPlayers,
+        queueType: this.queueType
+      });
+      this.clearCountdown();
+      this.state.status = "waiting";
+      this.state.countdown = 0;
+      this.updateMetadata();
+      return;
+    }
+
+    console.debug('[drift-room] startMatch', {
+      playerIds: Array.from(this.state.players.keys()),
+      clientCount: this.clients.length
+    });
+
+    this.clearCountdown();
+    this.matchStartTimestamp = Date.now();
+    this.state.status = "active";
+    this.state.countdown = 0;
+    this.state.winnerId = "";
+    this.state.prizePool = this.computePrizePool(true);
+    this.lock();
+    this.emitLobbyInfo();
+
+    const activePlayers = Array.from(this.state.players.values());
+    const spacing = 1.4;
+    activePlayers.forEach((player, index) => {
+      this.resetPlayer(player, true);
+      const offset = (index - (activePlayers.length - 1) / 2) * spacing;
+      player.z = offset;
+    });
+
+    // FIX #11: Remover setTimeout redundante, usar apenas verificação manual em updatePlayers()
+    this.updateMetadata();
+  }
+
+  private finishMatch(winner?: Player) {
+    if (this.state.status !== "active") {
+      return;
+    }
+
+    const resolvedWinner = winner ?? this.evaluateWinner();
+    console.debug('[drift-room] finishMatch', {
+      winner: resolvedWinner?.id,
+      playerCount: this.clients.length
+    });
+    if (resolvedWinner) {
+      resolvedWinner.isWinner = true;
+      resolvedWinner.opacity = 1;
+      this.state.winnerId = resolvedWinner.id;
+    } else {
+      this.state.winnerId = "";
+    }
+
+    this.state.status = "finished";
+    this.matchStartTimestamp = 0;
+    if (this.matchTimeout) {
+      clearTimeout(this.matchTimeout);
+      this.matchTimeout = undefined;
+    }
+
+    setTimeout(() => {
+      this.resetForNextLobby();
+    }, 8000);
+
+    this.emitLobbyInfo();
+    this.updateMetadata();
+  }
+
+  private resetForNextLobby() {
+    console.debug('[drift-room] resetForNextLobby');
+    this.unlock();
+    this.state.status = "waiting";
+    this.state.winnerId = "";
+    this.state.countdown = 0;
+    // CRITICAL FIX #4: Generate new unique seed on reset
+    this.state.seed = this.generateUniqueSeed();
+    this.matchStartTimestamp = 0;
+
+    this.state.players.forEach((player) => {
+      this.resetPlayer(player, false);
+    });
+
+    this.state.playerCount = this.clients.length;
+    this.refreshEconomicState();
+    this.emitLobbyInfo();
+    this.updateMetadata();
+  }
+
+  private checkForWinner() {
+    if (this.state.status !== "active") {
+      return;
+    }
+
+    const activePlayers = Array.from(this.state.players.values()).filter((player) => !player.eliminated);
+    if (activePlayers.length <= 1) {
+      console.debug('[drift-room] Finishing match - only one player remaining', {
+        activePlayers: activePlayers.length,
+        totalPlayers: this.state.players.size,
+        winnerId: activePlayers[0]?.id
+      });
+      this.finishMatch(activePlayers[0]);
+    }
+  }
+
+  private refreshEconomicState() {
+    this.state.prizePool = this.computePrizePool(false);
+  }
+
+  private computePrizePool(isMatchStarting: boolean): number {
+    const betAmount = this.state.betAmount;
+
+    if (this.queueType === "private") {
+      const participantCount = isMatchStarting ? this.clients.length : this.state.playerCount;
+      if (participantCount <= 1) {
+        return 0;
+      }
+      const grossPool = betAmount * Math.max(participantCount, 0);
+      const netPool = grossPool * (1 - PLATFORM_FEE_RATE);
+      return Math.max(0, Math.round(netPool * 100) / 100);
+    }
+
+    return betAmount * 4;
+  }
+
+  private emitLobbyInfo(target?: Client) {
+    const payload = {
+      roomType: this.queueType,
+      inviteCode: this.queueType === "private" ? this.state.inviteCode : "",
+      hostId: this.hostSessionId ?? "",
+      betAmount: this.state.betAmount,
+      prizePool: this.state.prizePool,
+      playerCount: this.state.playerCount,
+      status: this.state.status
+    };
+
+    console.debug('[drift-room] emitLobbyInfo', payload, { target: Boolean(target) });
+
+    if (target) {
+      target.send(MESSAGE.LOBBY_INFO, payload);
+      return;
+    }
+
+    this.broadcast(MESSAGE.LOBBY_INFO, payload);
+  }
+
+  // MUDANÇA: Fixed timestep - agora apenas para jogadores desconectados (auto-pilot)
+  private updatePlayers(dt: number): void {
+    if (this.state.status !== "active") {
+      return;
+    }
+
+    // FIX #11: Verificação manual de timeout (removido setTimeout)
+    if (this.matchStartTimestamp > 0) {
+      const elapsed = Date.now() - this.matchStartTimestamp;
+      if (elapsed >= MATCH_DURATION_MS) {
+        this.finishMatch();
+        return;
+      }
+    }
+
+    // MUDANÇA: Criar set de IDs conectados para detectar desconexões
+    const connectedIds = new Set(this.clients.map(c => c.sessionId));
+
+    this.state.players.forEach((player, playerId) => {
+      if (player.eliminated) {
+        return;
+      }
+
+      // MUDANÇA: Apenas rodar física para jogadores DESCONECTADOS (auto-pilot)
+      // Jogadores conectados enviam suas próprias posições via POSITION_UPDATE
+      const isConnected = connectedIds.has(playerId);
+      if (isConnected) {
+        return; // Skip - cliente controla física
+      }
+
+      // AUTO-PILOT: Física do servidor para jogadores desconectados
+      console.debug('[drift-room] Auto-pilot active for disconnected player:', playerId);
+
+      const steering = player.steering;
+      const intensity = Math.max(0.35, player.steeringIntensity || Math.abs(steering));
+      const isDrifting = player.pressing || Math.abs(steering) > 0.05;
+
+      // Sistema de física melhorado e mais responsivo
+      if (Math.abs(steering) > 0.05) {
+        // Curva ativa com steering - mais responsiva
+        const turnRate = YAW_ACCELERATION * intensity * Math.sign(steering) * dt;
+        player.yaw += turnRate;
+      } else if (player.pressing) {
+        // Drift automático quando apenas pressionando (sem steering específico)
+        player.yaw += YAW_ACCELERATION * 0.45 * dt;
+      } else {
+        // Recuperação suave quando não está driftando
+        const recovery = player.yaw * Math.min(1, YAW_RECOVERY * dt);
+        player.yaw -= recovery;
+      }
+
+      // Normalizar ângulo para evitar valores extremos
+      while (player.yaw > Math.PI) player.yaw -= Math.PI * 2;
+      while (player.yaw < -Math.PI) player.yaw += Math.PI * 2;
+
+      // Movimento consistente
+      const forward = BASE_SPEED * dt;
+      const yaw = player.yaw;
+
+      // Usar sin para x e cos para z (coordenadas corretas)
+      player.x += Math.sin(yaw) * forward;
+      player.z += Math.cos(yaw) * forward;
+      player.distance += forward;
+      player.timeAlive += dt;
+
+      // Verificar limites da pista
+      if (Math.abs(player.z) > TRACK_HALF_WIDTH) {
+        player.eliminated = true;
+        player.pressing = false;
+        player.opacity = 0.2;
+        console.log('[drift-room] Disconnected player eliminated (auto-pilot):', {
+          playerId,
+          name: player.name
+        });
+        this.checkForWinner();
+      }
+    });
+  }
+
+  private resetPlayer(player: Player, asActive: boolean) {
+    player.x = 0;
+    player.y = 1.0; // Altura adequada acima da pista
+    player.z = 0;
+    player.yaw = 0;
+    player.distance = 0;
+    player.pressing = false;
+    player.steering = 0;
+    player.steeringIntensity = 0;
+    player.timeAlive = 0;
+    player.eliminated = false;
+    player.isWinner = false;
+    player.ready = false;
+    player.opacity = asActive ? 1 : 0.5;
+  }
+
+  // FIX #14: Melhor determinação de vencedor
+  private evaluateWinner(): Player | undefined {
+    let winner: Player | undefined;
+    let bestScore = 0; // Changed from -Infinity to 0
+
+    this.state.players.forEach((player) => {
+      const score = player.timeAlive * 100 + player.distance;
+      if (score > bestScore) {
+        bestScore = score;
+        winner = player;
+      }
+    });
+
+    // Return undefined if no valid winner (all eliminated immediately)
+    return bestScore > 0 ? winner : undefined;
+  }
+
+  private resolveBetAmount(betAmount?: number): number {
+    if (this.queueType === "public") {
+      const resolved = PUBLIC_BETS.includes(Number(betAmount)) ? Number(betAmount) : PUBLIC_BETS[0];
+      return resolved;
+    }
+    const parsed = Number(betAmount);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      return 10;
+    }
+    return Math.min(1_000, Math.max(1, Math.round(parsed)));
+  }
+
+  private normalizeInvite(inviteCode?: string) {
+    if (typeof inviteCode !== "string") {
+      return undefined;
+    }
+    const cleaned = inviteCode.trim().toUpperCase();
+    return cleaned.length >= 4 ? cleaned : undefined;
+  }
+
+  // CRITICAL FIX #4: Generate cryptographically secure unique seed
+  private generateUniqueSeed(): number {
+    const timestamp = Date.now();
+    const randomBytes = crypto.randomBytes(4).readUInt32BE(0);
+
+    // Create hash from roomId to add uniqueness per room
+    const roomHash = this.roomId.split('').reduce((acc, char) =>
+      ((acc << 5) - acc) + char.charCodeAt(0), 0
+    );
+
+    // Combine all entropy sources and return unsigned 32-bit integer
+    const combinedSeed = (timestamp + randomBytes + Math.abs(roomHash)) >>> 0;
+
+    console.log('[drift-room] Generated unique seed:', {
+      seed: combinedSeed,
+      timestamp,
+      randomComponent: randomBytes,
+      roomHash
+    });
+
+    return combinedSeed;
+  }
+
+  private generateInviteCode(): string {
+    // Use cryptographically secure random instead of Math.random()
+    return crypto.randomBytes(3).toString('hex').toUpperCase().slice(0, 6);
+  }
+
+  private updateMetadata() {
+    this.setMetadata({
+      roomType: this.state.roomType,
+      betAmount: this.state.betAmount,
+      inviteCode: this.queueType === "private" ? this.state.inviteCode : undefined,
+      status: this.state.status,
+      players: this.clients.length,
+      capacity: this.maxClients,
+      locked: this.locked,
+      hostId: this.state.hostId
+    });
+  }
+}
