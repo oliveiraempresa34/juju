@@ -7,6 +7,7 @@ import { FlagIcon, PartyIcon, WarningIcon, GamepadIcon, WalletIcon, TrophyIcon, 
 import { FAQSection } from '../components/FAQSection';
 import { GalaxyBackground } from '../components/GalaxyBackground';
 import { generateRacingUsername, generateRacingEmail } from '../utils/usernameGenerator';
+import { Glass, GlassButton } from '../components/Glass';
 
 export const Login: React.FC = () => {
   const [isLogin, setIsLogin] = useState(true);
@@ -106,18 +107,34 @@ export const Login: React.FC = () => {
       {/* Logo and 3D Car Animation Header */}
       <LogoHeader />
 
-      <div className="login-card glass-panel fade-in">
-        <div className="login-card__content">
+      <Glass
+        className="login-card fade-in"
+        borderRadius={24}
+        style={{ maxWidth: '480px', width: '100%', margin: '0 auto' }}
+      >
+        <div className="login-card__content" style={{ width: '100%', padding: '32px' }}>
           <header className="login-card__header">
             <p className="login-card__subtitle">A experiência definitiva de drift competitivo.</p>
           </header>
 
           <div className="login-card__toggle">
-            <div className="button-segmented-group">
+            <div className="button-segmented-group" style={{ display: 'flex', gap: '8px', padding: '4px', backgroundColor: 'rgba(0, 0, 0, 0.3)', borderRadius: '12px' }}>
               <button
                 type="button"
                 className={`button-segmented ${isLogin ? 'is-active' : ''}`}
                 onClick={() => handleModeToggle(true)}
+                style={{
+                  flex: 1,
+                  padding: '12px 24px',
+                  borderRadius: '8px',
+                  border: 'none',
+                  backgroundColor: isLogin ? 'rgba(147, 51, 234, 0.3)' : 'transparent',
+                  color: isLogin ? '#a78bfa' : 'rgba(165, 174, 188, 0.8)',
+                  fontWeight: '600',
+                  cursor: 'pointer',
+                  transition: 'all 0.2s ease',
+                  boxShadow: isLogin ? '0 0 20px rgba(147, 51, 234, 0.3)' : 'none',
+                }}
               >
                 Entrar
               </button>
@@ -125,6 +142,18 @@ export const Login: React.FC = () => {
                 type="button"
                 className={`button-segmented ${!isLogin ? 'is-active' : ''}`}
                 onClick={() => handleModeToggle(false)}
+                style={{
+                  flex: 1,
+                  padding: '12px 24px',
+                  borderRadius: '8px',
+                  border: 'none',
+                  backgroundColor: !isLogin ? 'rgba(147, 51, 234, 0.3)' : 'transparent',
+                  color: !isLogin ? '#a78bfa' : 'rgba(165, 174, 188, 0.8)',
+                  fontWeight: '600',
+                  cursor: 'pointer',
+                  transition: 'all 0.2s ease',
+                  boxShadow: !isLogin ? '0 0 20px rgba(147, 51, 234, 0.3)' : 'none',
+                }}
               >
                 Criar conta
               </button>
@@ -326,10 +355,14 @@ export const Login: React.FC = () => {
             </div>
           </form>
         </div>
-      </div>
+      </Glass>
 
       {/* Features Section */}
-      <div className="login-features-container glass-panel fade-in" style={{ marginTop: '24px' }}>
+      <Glass
+        className="login-features-container fade-in"
+        borderRadius={24}
+        style={{ maxWidth: '900px', width: '100%', margin: '24px auto 0', padding: '32px' }}
+      >
         <div className="ui-label-muted" style={{ marginBottom: '16px', textAlign: 'center' }}>
           Recursos principais
         </div>
@@ -351,7 +384,7 @@ export const Login: React.FC = () => {
             Física refinada de drift
           </div>
         </div>
-      </div>
+      </Glass>
 
       {/* Info Sections */}
       <div className="login-info-section" style={{ marginTop: '48px', display: 'flex', gap: '32px', alignItems: 'center', maxWidth: '900px', margin: '48px auto 0' }}>

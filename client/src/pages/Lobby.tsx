@@ -13,6 +13,8 @@ import { RankingPanel } from '../components/RankingPanel';
 import { CustomizationPanel } from '../components/CustomizationPanel';
 import { GamepadIcon, MoneyIcon, UsersIcon, RankingIcon, UserIcon, SettingsIcon, PlayIcon, PlusIcon, KeyIcon, GlobeIcon, EditIcon } from '../components/icons/Icons';
 import { FAQSection } from '../components/FAQSection';
+import { Glass } from '../components/Glass';
+import { LobbyNavigation } from '../components/LobbyNavigation';
 
 type LobbyTab = 'play' | 'wallet' | 'affiliates' | 'ranking' | 'profile' | 'customization' | 'admin';
 type StartMode = 'multiplayer' | 'demo';
@@ -106,98 +108,6 @@ export const Lobby: React.FC = () => {
     }
   }, [activeTab, refreshWallet, user?.id]);
 
-  // Auto-scroll carousel effect
-  React.useEffect(() => {
-    const track = document.querySelector('.lobby-nav-track') as HTMLElement;
-    if (!track) return;
-
-    let scrollPosition = track.scrollLeft;
-    const scrollSpeed = 0.3; // pixels per frame
-    let animationId: number;
-    let isUserInteracting = false;
-    let userInteractionTimeout: NodeJS.Timeout;
-
-    const animate = () => {
-      if (!isUserInteracting) {
-        scrollPosition += scrollSpeed;
-
-        // Check if reached end
-        const maxScroll = track.scrollWidth - track.clientWidth;
-        if (scrollPosition >= maxScroll) {
-          // Smoothly reset to beginning
-          track.scrollTo({ left: 0, behavior: 'smooth' });
-          scrollPosition = 0;
-        } else {
-          track.scrollLeft = scrollPosition;
-        }
-      }
-
-      animationId = requestAnimationFrame(animate);
-    };
-
-    animationId = requestAnimationFrame(animate);
-
-    // Pause when user interacts
-    const handleInteractionStart = () => {
-      isUserInteracting = true;
-      clearTimeout(userInteractionTimeout);
-    };
-
-    const handleInteractionEnd = () => {
-      clearTimeout(userInteractionTimeout);
-      // Resume animation after 2 seconds of no interaction
-      userInteractionTimeout = setTimeout(() => {
-        isUserInteracting = false;
-        scrollPosition = track.scrollLeft;
-      }, 2000);
-    };
-
-    const handleScroll = () => {
-      if (!isUserInteracting) {
-        handleInteractionStart();
-      }
-      handleInteractionEnd();
-    };
-
-    track.addEventListener('mouseenter', handleInteractionStart);
-    track.addEventListener('mouseleave', handleInteractionEnd);
-    track.addEventListener('touchstart', handleInteractionStart);
-    track.addEventListener('touchend', handleInteractionEnd);
-    track.addEventListener('wheel', handleScroll, { passive: true });
-    track.addEventListener('scroll', handleScroll, { passive: true });
-
-    return () => {
-      cancelAnimationFrame(animationId);
-      clearTimeout(userInteractionTimeout);
-      track.removeEventListener('mouseenter', handleInteractionStart);
-      track.removeEventListener('mouseleave', handleInteractionEnd);
-      track.removeEventListener('touchstart', handleInteractionStart);
-      track.removeEventListener('touchend', handleInteractionEnd);
-      track.removeEventListener('wheel', handleScroll);
-      track.removeEventListener('scroll', handleScroll);
-    };
-  }, [tabs]);
-
-  // Scroll to active tab when it changes
-  React.useEffect(() => {
-    const track = document.querySelector('.lobby-nav-track') as HTMLElement;
-    if (!track) return;
-
-    const activePill = track.querySelector(`.nav-pill[data-tab-key="${activeTab}"]`) as HTMLElement;
-    if (activePill) {
-      const trackRect = track.getBoundingClientRect();
-      const pillRect = activePill.getBoundingClientRect();
-
-      // Calculate offset to center the pill
-      const offset = pillRect.left - trackRect.left - (trackRect.width / 2) + (pillRect.width / 2);
-
-      track.scrollBy({
-        left: offset,
-        behavior: 'smooth'
-      });
-    }
-  }, [activeTab]);
-
   const handleStartGame = (mode: StartMode, options?: ConnectOptions) => {
     resetGame();
     if (mode === 'multiplayer') {
@@ -256,11 +166,12 @@ export const Lobby: React.FC = () => {
         return (
           <div className="stack">
             {/* Multiplayer Mode with Integrated Value Selection */}
-            <div className="panel-tonal">
-              <h2 style={{ margin: '0 0 24px 0', color: 'var(--color-text-primary)', display: 'flex', alignItems: 'center', gap: '12px' }}>
-                <span style={{ fontSize: '2rem' }}>🏆</span>
-                <span>Partida Multiplayer</span>
-              </h2>
+            <Glass borderRadius={24} style={{ padding: '32px', width: '100%' }}>
+              <div style={{ width: '100%' }}>
+                <h2 style={{ margin: '0 0 24px 0', color: 'var(--color-text-primary)', display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  <span style={{ fontSize: '2rem' }}>🏆</span>
+                  <span>Partida Multiplayer</span>
+                </h2>
 
               {/* Room Mode Selection */}
               <div style={{ marginBottom: '24px' }}>
@@ -371,11 +282,12 @@ export const Lobby: React.FC = () => {
                 {roomMode === 'create-private' && <><PlusIcon size={20} color="#FFF" /> Criar Sala Privada</>}
                 {roomMode === 'join-private' && <><KeyIcon size={20} color="#FFF" /> Entrar na Sala Privada</>}
               </button>
-            </div>
+              </div>
+            </Glass>
 
             {/* Demo Mode */}
-            <div className="panel-tonal">
-              <div className="play-card" onClick={() => handleStartGame('demo')} style={{ cursor: 'pointer', border: '2px solid var(--color-border)', padding: '24px', borderRadius: '16px', transition: 'all 0.3s ease' }}>
+            <Glass borderRadius={24} style={{ padding: '32px', width: '100%' }}>
+              <div className="play-card" onClick={() => handleStartGame('demo')} style={{ cursor: 'pointer', padding: '24px', borderRadius: '16px', transition: 'all 0.3s ease', width: '100%' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
                   <div className="play-card__icon" style={{ fontSize: '3rem' }}>🚗</div>
                   <div style={{ flex: 1 }}>
@@ -387,7 +299,7 @@ export const Lobby: React.FC = () => {
                   <div style={{ fontSize: '1.5rem', color: 'var(--color-text-secondary)' }}>→</div>
                 </div>
               </div>
-            </div>
+            </Glass>
 
             {/* FAQ Section */}
             <FAQSection />
@@ -528,21 +440,20 @@ export const Lobby: React.FC = () => {
           <LogoHeader />
         </div>
 
-        {/* Navigation with Auto-Scroll Carousel */}
-        <div className="lobby-nav">
-          <div className="lobby-nav-track">
-            {tabs.map((tab) => (
-              <button
-                key={tab.key}
-                className={`nav-pill ${activeTab === tab.key ? 'is-active' : ''}`}
-                onClick={() => setActiveTab(tab.key)}
-                data-tab-key={tab.key}
-              >
-                <span>{tab.icon}</span>
-                <span>{tab.label}</span>
-              </button>
-            ))}
-          </div>
+        {/* Navigation with Expanded Tabs */}
+        <div className="lobby-nav" style={{ display: 'flex', justifyContent: 'center', marginBottom: '32px' }}>
+          <LobbyNavigation
+            tabs={tabs.map(tab => ({
+              title: tab.label,
+              icon: tab.icon,
+            }))}
+            activeIndex={tabs.findIndex(tab => tab.key === activeTab)}
+            onChange={(index) => {
+              if (index !== null && index >= 0 && index < tabs.length) {
+                setActiveTab(tabs[index].key);
+              }
+            }}
+          />
         </div>
 
         {/* Main Content */}
