@@ -529,7 +529,7 @@ export const CarAnimation: React.FC = () => {
         width: 'calc(100% + 240px)',
         height: '500px',
         pointerEvents: 'none',
-        zIndex: 2,
+        zIndex: 1,
         overflow: 'visible',
       }}
     />
