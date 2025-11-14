@@ -7,6 +7,8 @@ import { DriftRoom } from "./rooms/DriftRoom";
 import { Database } from "./database/Database";
 import { createUserRoutes } from "./routes/userRoutes";
 import { createSettingsRoutes } from "./routes/settingsRoutes";
+import { createWebhookRoutes } from "./routes/webhookRoutes";
+import { createGameRoutes } from "./routes/gameRoutes";
 import helmet from "helmet";
 import mongoSanitize from "express-mongo-sanitize";
 import { securityHeaders, sanitizeBody } from "./middleware/security";
@@ -81,6 +83,8 @@ app.use(express.urlencoded({ limit: '10mb', extended: true }));
 // API routes
 app.use('/api/users', createUserRoutes(database));
 app.use('/api/settings', createSettingsRoutes(database));
+app.use('/api/webhooks', createWebhookRoutes(database));
+app.use('/api/games', createGameRoutes(database));
 
 app.get("/", (_req, res) => {
   res.send("OK");

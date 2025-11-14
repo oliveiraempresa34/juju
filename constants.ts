@@ -287,13 +287,18 @@ export const GAME_CONFIG = {
     MIN_WITHDRAWAL: 20,              // Minimum withdrawal amount
     WITHDRAWAL_FEE: 0.02,            // 2% withdrawal fee
     
-    // Affiliates
-    AFFILIATE_COMMISSION: 0.10,      // 10% commission on losses
+    // Affiliates (3-LEVEL SYSTEM)
+    AFFILIATE_COMMISSION: 0.10,      // 10% base commission (Level 1)
+    AFFILIATE_LEVELS: {
+      LEVEL_1: { rate: 0.10, description: '10% for direct referrals' },    // Direct referrals
+      LEVEL_2: { rate: 0.05, description: '5% for second level' },         // Referrals of referrals
+      LEVEL_3: { rate: 0.02, description: '2% for third level' },          // Third level
+    },
     AFFILIATE_TIERS: {
-      BRONZE: { min: 0, rate: 0.05 },    // 5% for new affiliates
-      SILVER: { min: 1000, rate: 0.08 }, // 8% after R$1000 generated
+      BRONZE: { min: 0, rate: 0.10 },    // 10% for new affiliates
+      SILVER: { min: 1000, rate: 0.10 }, // 10% after R$1000 generated
       GOLD: { min: 5000, rate: 0.10 },   // 10% after R$5000 generated
-      PLATINUM: { min: 20000, rate: 0.12 }, // 12% after R$20000 generated
+      PLATINUM: { min: 20000, rate: 0.12 }, // 12% after R$20000 generated (bonus)
     },
   },
 

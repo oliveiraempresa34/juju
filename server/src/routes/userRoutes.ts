@@ -438,16 +438,24 @@ class UserControllerImpl implements UserController {
       // Criar saldo inicial
       await this.database.updateUserBalance(userId, 10, 'Bônus de boas-vindas');
 
-      // Process affiliate commissions if user was referred
+      // Process affiliate commissions if user was referred (3 LEVELS)
       if (referredBy) {
         try {
-          // Level 1 commission (5% of welcome bonus)
+          // Level 1 commission (10% of welcome bonus)
           await this.database.processAffiliateCommission(referredBy, 10, 1);
 
           // Check for level 2 commission
-          const referrer = await this.database.getUserById(referredBy);
-          if (referrer?.referredBy) {
-            await this.database.processAffiliateCommission(referrer.referredBy, 10, 2);
+          const level1Referrer = await this.database.getUserById(referredBy);
+          if (level1Referrer?.referredBy) {
+            // Level 2 commission (5% of welcome bonus)
+            await this.database.processAffiliateCommission(level1Referrer.referredBy, 10, 2);
+
+            // Check for level 3 commission
+            const level2Referrer = await this.database.getUserById(level1Referrer.referredBy);
+            if (level2Referrer?.referredBy) {
+              // Level 3 commission (2% of welcome bonus)
+              await this.database.processAffiliateCommission(level2Referrer.referredBy, 10, 3);
+            }
           }
         } catch (commissionError) {
           console.error('Error processing affiliate commissions:', commissionError);
