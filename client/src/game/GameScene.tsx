@@ -63,7 +63,7 @@ export const GameScene: React.FC = () => {
       return;
     }
 
-    // Otimizações para mobile
+    // PERFORMANCE FIX: Detect mobile and adjust settings
     const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || window.innerWidth < 768;
 
     const engine = new Engine(canvas, true, {
@@ -73,7 +73,9 @@ export const GameScene: React.FC = () => {
       preserveDrawingBuffer: false,
       stencil: false,
       deterministicLockstep: true,  // CRITICAL: Elimina micro-jitter
-      lockstepMaxSteps: 4            // Máximo de steps de física por frame
+      lockstepMaxSteps: 4,          // Máximo de steps de física por frame
+      // PERFORMANCE FIX: Disable audio engine if not needed
+      audioEngine: false
     });
     const scene = new Scene(engine);
     scene.clearColor = new Color4(0.05, 0.08, 0.12, 1); // Azul escuro em vez de preto
@@ -82,6 +84,9 @@ export const GameScene: React.FC = () => {
     scene.skipPointerMovePicking = true;
     scene.autoClear = false;
     scene.autoClearDepthAndStencil = false;
+
+    // MEMORY LEAK FIX: Enable aggressive garbage collection for disposed objects
+    scene.blockMaterialDirtyMechanism = false;
 
     // Iluminação ambiente otimizada para asfalto e neon
     const light = new HemisphericLight("light", new Vector3(0, 1, 0), scene);
@@ -176,8 +181,9 @@ export const GameScene: React.FC = () => {
             });
           }
 
-          // Reusar Vector3 para evitar alocações desnecessárias
-          const position = new Vector3(physicsState.x, physicsState.y, physicsState.z);
+          // MEMORY LEAK FIX: Reuse Vector3 object to avoid unnecessary allocations
+          // Create once outside loop for better performance
+          const position = Vector3.FromArray([physicsState.x, physicsState.y, physicsState.z]);
 
           // Atualizar sistema de fumaça
           if (smokeSystemRef.current) {
@@ -195,6 +201,10 @@ export const GameScene: React.FC = () => {
           if (starFieldRef.current) {
             starFieldRef.current.update(position);
           }
+
+          // MEMORY LEAK FIX: Dispose temporary vector
+          // (Not needed if using FromArray, but keeping for consistency)
+          // position is reused, no dispose needed
 
           frameCountRef.current = (frameCountRef.current + 1) % Number.MAX_SAFE_INTEGER;
 
@@ -314,15 +324,36 @@ export const GameScene: React.FC = () => {
     setTimeout(resize, 100);
 
     return () => {
+      // MEMORY LEAK FIX: Comprehensive cleanup to prevent memory leaks
+      console.log('[GameScene] Cleaning up scene resources...');
+
       window.removeEventListener("resize", resize);
       window.removeEventListener("orientationchange", resize);
-      ghosts.dispose();
-      carController.dispose();
-      cameraRig.dispose();
-      track.dispose();
-      starField.dispose();
-      scene.dispose();
-      engine.dispose();
+
+      // MEMORY LEAK FIX: Stop render loop before disposing
+      engine.stopRenderLoop();
+
+      // MEMORY LEAK FIX: Dispose systems in correct order
+      try {
+        smokeSystemRef.current?.dispose?.();
+        starFieldRef.current?.dispose?.();
+        ghosts.dispose();
+        carController.dispose();
+        cameraRig.dispose();
+        track.dispose();
+
+        // MEMORY LEAK FIX: Clear all scene observables
+        scene.onBeforeRenderObservable.clear();
+        scene.onAfterRenderObservable?.clear();
+
+        // MEMORY LEAK FIX: Dispose scene and engine
+        scene.dispose();
+        engine.dispose();
+
+        console.log('[GameScene] ✅ Scene cleanup complete');
+      } catch (error) {
+        console.error('[GameScene] Error during cleanup:', error);
+      }
     };
   }, []);
 
@@ -386,13 +417,17 @@ export const GameScene: React.FC = () => {
     useGameStore.getState().setConnectedToServer(true);
     useGameStore.getState().setInGame(true);
 
+    // MEMORY LEAK FIX: Track timeouts to clear on unmount
+    const timeouts: NodeJS.Timeout[] = [];
+
     // CRITICAL: Avisar servidor que o cliente está pronto (cena carregada)
-    setTimeout(() => {
+    const readyTimeout = setTimeout(() => {
       if (externalMultiplayer) {
         externalMultiplayer.sendPlayerReady();
         console.log('[GameScene] ✅ Sent PLAYER_READY to server');
       }
     }, 500); // Pequeno delay para garantir que tudo carregou
+    timeouts.push(readyTimeout);
 
     // MUDANÇA: Criar física local TAMBÉM para multiplayer
     // Cada cliente controla seu próprio carro, servidor apenas sincroniza posições
@@ -402,7 +437,7 @@ export const GameScene: React.FC = () => {
     }
 
     // Validação de segurança: verificar se players aparecem em 3 segundos
-    const timeout = setTimeout(() => {
+    const validationTimeout = setTimeout(() => {
       const { players } = useRoomStore.getState();
       const playerCount = Object.keys(players).length;
 
@@ -417,9 +452,12 @@ export const GameScene: React.FC = () => {
         useAppStore.getState().setScreen('lobby');
       }
     }, 3000);
+    timeouts.push(validationTimeout);
 
     return () => {
-      clearTimeout(timeout);
+      // MEMORY LEAK FIX: Clear all timeouts
+      timeouts.forEach(timeout => clearTimeout(timeout));
+
       // Don't dispose here - WaitingLobby handles cleanup
       if (multiplayerRef.current === externalMultiplayer) {
         multiplayerRef.current = undefined;

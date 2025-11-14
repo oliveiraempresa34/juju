@@ -74,16 +74,50 @@ app.use(cors({
   },
   credentials: true
 }));
-// Increase body size limit for image uploads (base64 images can be large)
-app.use(express.json({ limit: '10mb' }));
+// SECURITY FIX: Validate body size and add error handling
+app.use(express.json({
+  limit: '10mb',
+  verify: (req, _res, buf, encoding) => {
+    // Validate JSON before parsing
+    if (buf && buf.length > 0) {
+      try {
+        JSON.parse(buf.toString(encoding as BufferEncoding || 'utf8'));
+      } catch (e) {
+        throw new Error('Invalid JSON');
+      }
+    }
+  }
+}));
 app.use(express.urlencoded({ limit: '10mb', extended: true }));
 
 // API routes
 app.use('/api/users', createUserRoutes(database));
 app.use('/api/settings', createSettingsRoutes(database));
 
+// SECURITY FIX: Basic health check without exposing server info
 app.get("/", (_req, res) => {
-  res.send("OK");
+  res.status(200).json({ status: 'ok', timestamp: Date.now() });
+});
+
+// SECURITY FIX: Global error handler to prevent information leakage
+app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  // Log full error internally
+  logger.error('Unhandled error', {
+    message: err.message,
+    stack: err.stack,
+    name: err.name
+  });
+
+  // Send sanitized error to client
+  const statusCode = err.statusCode || err.status || 500;
+  const message = process.env.NODE_ENV === 'production'
+    ? 'Internal server error'
+    : err.message || 'Internal server error';
+
+  res.status(statusCode).json({
+    error: message,
+    ...(process.env.NODE_ENV !== 'production' && { stack: err.stack })
+  });
 });
 
 const httpServer = createServer(app);

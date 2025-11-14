@@ -157,18 +157,31 @@ export class MultiplayerSync {
       return;
     }
 
-    this.room.send(MESSAGE.INPUT, {
+    // SECURITY FIX: Validate and sanitize input before sending
+    const sanitizedInput = {
       pressing: Boolean(input.accelerate || input.drifting),
-      steering: input.steering,
-      intensity: input.intensity
-    });
+      steering: Math.max(-1, Math.min(1, Number(input.steering) || 0)), // Clamp to [-1, 1]
+      intensity: Math.max(0, Math.min(1, Number(input.intensity) || 0))  // Clamp to [0, 1]
+    };
+
+    this.room.send(MESSAGE.INPUT, sanitizedInput);
   }
 
   sendPosition(position: { x: number; y: number; z: number; yaw: number; distance: number }) {
     if (!this.room) {
       return;
     }
-    this.room.send(MESSAGE.POSITION, position);
+
+    // SECURITY FIX: Validate position values before sending
+    const sanitizedPosition = {
+      x: Number.isFinite(position.x) ? position.x : 0,
+      y: Number.isFinite(position.y) ? position.y : 0,
+      z: Number.isFinite(position.z) ? position.z : 0,
+      yaw: Number.isFinite(position.yaw) ? position.yaw : 0,
+      distance: Number.isFinite(position.distance) && position.distance >= 0 ? position.distance : 0
+    };
+
+    this.room.send(MESSAGE.POSITION, sanitizedPosition);
   }
 
   sendPlayerReady() {
@@ -194,6 +207,7 @@ export class MultiplayerSync {
   }
 
   // CRITICAL: Loop de sincronização contínua para garantir atualizações
+  // PERFORMANCE FIX: Optimized sync loop with throttling
   private startSyncLoop() {
     if (this.syncLoopHandle !== undefined) {
       return; // Já está rodando
@@ -201,13 +215,21 @@ export class MultiplayerSync {
 
     console.log('[MultiplayerSync] 🔄 Starting continuous sync loop');
 
+    // PERFORMANCE FIX: Throttle to 30fps for ghost players (less CPU usage)
+    const SYNC_INTERVAL = 1000 / 30; // 30 updates per second
+
     const syncFrame = () => {
       if (!this.room || !this.room.state || !this.room.state.players) {
         return;
       }
 
-      // Sincronizar a cada frame (~16ms para 60fps)
       const now = performance.now();
+
+      // PERFORMANCE FIX: Throttle updates to reduce CPU usage
+      if (now - this.lastSyncTime < SYNC_INTERVAL) {
+        this.syncLoopHandle = requestAnimationFrame(syncFrame);
+        return;
+      }
 
       // Ler diretamente do state.players (MapSchema)
       const players = this.room.state.players;
