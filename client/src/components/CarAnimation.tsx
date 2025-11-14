@@ -177,112 +177,34 @@ export const CarAnimation: React.FC = () => {
       rearDiffuser.rotation.z = 0.3;
       rearDiffuser.parent = carGroup;
 
-      // GT-R Wheels - Proper design with deep dish
+      // Simplified GT-R Wheels - Only tire, brake caliper, and brake disc
       const tireMaterial = new BABYLON.StandardMaterial('tireMat', scene);
       tireMaterial.diffuseColor = new BABYLON.Color3(0.08, 0.08, 0.08);
       tireMaterial.specularColor = new BABYLON.Color3(0.15, 0.15, 0.15);
       tireMaterial.specularPower = 16;
 
-      const createGTRWheel = (x: number, z: number, isFront: boolean, isLeft: boolean) => {
+      const createSimplifiedWheel = (x: number, z: number) => {
         const wheelContainer = new BABYLON.TransformNode(`wheelContainer_${x}_${z}`, scene);
         wheelContainer.position.set(x, 0.48, z);
         wheelContainer.parent = carGroup;
 
-        // Front wheels: drift angle
-        // Rear wheels: straight, facing viewer (90 degree rotation)
-        if (isFront) {
-          wheelContainer.rotation.y = isLeft ? Math.PI / 6 : -Math.PI / 6;
-        } else {
-          wheelContainer.rotation.y = Math.PI / 2;
-        }
-
-        // Tire - wider performance tire
+        // Tire - horizontal cylinder (rotated on Z axis)
         const tire = BABYLON.MeshBuilder.CreateCylinder('tire', {
           diameter: 0.96,
           height: 0.55,
           tessellation: 36,
         }, scene);
-
-        // All wheels horizontal (X-axis rotation)
-        tire.rotation.x = Math.PI / 2;
+        tire.rotation.z = Math.PI / 2; // Horizontal orientation
         tire.material = tireMaterial;
         tire.parent = wheelContainer;
 
-        // GT-R style 6-spoke rim (inside the tire)
-        const rim = BABYLON.MeshBuilder.CreateCylinder('rim', {
-          diameter: 0.64,
-          height: 0.40,
-          tessellation: 32,
-        }, scene);
-
-        rim.rotation.x = Math.PI / 2;
-
-        const rimMat = new BABYLON.StandardMaterial('rimMat', scene);
-        rimMat.diffuseColor = new BABYLON.Color3(0.82, 0.82, 0.85);
-        rimMat.specularColor = new BABYLON.Color3(1, 1, 1);
-        rimMat.specularPower = 128;
-        rim.material = rimMat;
-        rim.parent = wheelContainer;
-
-        // 6 spokes for GT-R wheel
-        const spokeContainer = new BABYLON.TransformNode('spokeContainer', scene);
-        spokeContainer.rotation.x = Math.PI / 2;
-        spokeContainer.parent = wheelContainer;
-
-        for (let i = 0; i < 6; i++) {
-          const angle = (i * Math.PI * 2) / 6;
-          const spoke = BABYLON.MeshBuilder.CreateBox('spoke', {
-            width: 0.08,
-            height: 0.26,
-            depth: 0.40,
-          }, scene);
-          spoke.position.set(
-            Math.cos(angle) * 0.16,
-            0,
-            Math.sin(angle) * 0.16
-          );
-          spoke.rotation.y = angle;
-          spoke.material = rimMat;
-          spoke.parent = spokeContainer;
-        }
-
-        // Center cap
-        const centerCap = BABYLON.MeshBuilder.CreateCylinder('centerCap', {
-          diameter: 0.20,
-          height: 0.42,
-          tessellation: 24,
-        }, scene);
-
-        centerCap.rotation.x = Math.PI / 2;
-
-        const capMat = new BABYLON.StandardMaterial('capMat', scene);
-        capMat.diffuseColor = new BABYLON.Color3(0.15, 0.15, 0.18);
-        capMat.specularColor = new BABYLON.Color3(0.8, 0.8, 0.8);
-        centerCap.material = capMat;
-        centerCap.parent = wheelContainer;
-
-        // Brake caliper (Brembo style)
-        const caliper = BABYLON.MeshBuilder.CreateBox('caliper', {
-          width: 0.25,
-          height: 0.35,
-          depth: 0.15,
-        }, scene);
-        caliper.position.set(0, -0.15, isLeft ? 0.25 : -0.25);
-        const caliperMat = new BABYLON.StandardMaterial('caliperMat', scene);
-        caliperMat.diffuseColor = new BABYLON.Color3(0.8, 0.1, 0.1); // Red Brembo
-        caliperMat.specularColor = new BABYLON.Color3(0.4, 0.4, 0.4);
-        caliper.material = caliperMat;
-        caliper.parent = wheelContainer;
-
-        // Brake disc
+        // Brake disc - aligned with tire
         const brakeDisc = BABYLON.MeshBuilder.CreateCylinder('brakeDisc', {
           diameter: 0.50,
-          height: 0.36,
+          height: 0.08,
           tessellation: 32,
         }, scene);
-
-        brakeDisc.rotation.x = Math.PI / 2;
-
+        brakeDisc.rotation.z = Math.PI / 2; // Same orientation as tire
         const discMat = new BABYLON.StandardMaterial('discMat', scene);
         discMat.diffuseColor = new BABYLON.Color3(0.35, 0.35, 0.38);
         discMat.specularColor = new BABYLON.Color3(0.6, 0.6, 0.6);
@@ -290,14 +212,27 @@ export const CarAnimation: React.FC = () => {
         brakeDisc.material = discMat;
         brakeDisc.parent = wheelContainer;
 
+        // Brake caliper - positioned on top of wheel
+        const caliper = BABYLON.MeshBuilder.CreateBox('caliper', {
+          width: 0.25,
+          height: 0.35,
+          depth: 0.15,
+        }, scene);
+        caliper.position.set(0, 0.2, 0); // Positioned above center
+        const caliperMat = new BABYLON.StandardMaterial('caliperMat', scene);
+        caliperMat.diffuseColor = new BABYLON.Color3(0.8, 0.1, 0.1); // Red Brembo
+        caliperMat.specularColor = new BABYLON.Color3(0.4, 0.4, 0.4);
+        caliper.material = caliperMat;
+        caliper.parent = wheelContainer;
+
         return wheelContainer;
       };
 
       // Position wheels with GT-R stance
-      createGTRWheel(1.5, 1.05, true, true);   // Front left
-      createGTRWheel(1.5, -1.05, true, false); // Front right
-      createGTRWheel(-1.5, 1.05, false, true);   // Rear left
-      createGTRWheel(-1.5, -1.05, false, false); // Rear right
+      createSimplifiedWheel(1.5, 1.05);   // Front left
+      createSimplifiedWheel(1.5, -1.05);  // Front right
+      createSimplifiedWheel(-1.5, 1.05);  // Rear left
+      createSimplifiedWheel(-1.5, -1.05); // Rear right
 
       // Side mirrors
       const mirrorMat = new BABYLON.StandardMaterial('mirrorMat', scene);
@@ -322,6 +257,7 @@ export const CarAnimation: React.FC = () => {
         mirror.position.set(0.9, 1.25, zPos);
         mirror.material = mirrorMat;
         mirror.parent = carGroup;
+
         return mirror;
       };
 
@@ -479,12 +415,11 @@ export const CarAnimation: React.FC = () => {
         'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
         scene
       );
-
       particleSystem.emitter = mainBody;
       particleSystem.minEmitBox = new BABYLON.Vector3(-2.7, 0, -1.3);
       particleSystem.maxEmitBox = new BABYLON.Vector3(-2.7, 0.3, 1.3);
 
-      // Subtle drift smoke (opacidade reduzida em 30%)
+      // Subtle drift smoke
       particleSystem.color1 = new BABYLON.Color4(1, 1, 1, 0.35);
       particleSystem.color2 = new BABYLON.Color4(0.98, 0.98, 0.98, 0.315);
       particleSystem.colorDead = new BABYLON.Color4(0.85, 0.85, 0.85, 0);
@@ -496,9 +431,7 @@ export const CarAnimation: React.FC = () => {
       particleSystem.maxLifeTime = 2.5;
 
       particleSystem.emitRate = 300;
-
       particleSystem.blendMode = BABYLON.ParticleSystem.BLENDMODE_STANDARD;
-
       particleSystem.gravity = new BABYLON.Vector3(0, 1.2, 0);
 
       particleSystem.direction1 = new BABYLON.Vector3(-3.5, 0.3, -1.2);
@@ -506,7 +439,6 @@ export const CarAnimation: React.FC = () => {
 
       particleSystem.minAngularSpeed = 0;
       particleSystem.maxAngularSpeed = Math.PI;
-
       particleSystem.minEmitPower = 2.5;
       particleSystem.maxEmitPower = 4.5;
       particleSystem.updateSpeed = 0.012;
@@ -519,8 +451,6 @@ export const CarAnimation: React.FC = () => {
     // Animation state
     let animationTime = 0;
     const cycleDuration = 11200;
-    const moveDuration = 5600;
-    const waitDuration = 2800;
     let lastTime = Date.now();
 
     // Smooth bidirectional animation
@@ -530,7 +460,6 @@ export const CarAnimation: React.FC = () => {
       lastTime = currentTime;
 
       animationTime += deltaTime;
-
       const cycleProgress = (animationTime % cycleDuration) / cycleDuration;
 
       if (cycleProgress < 0.375) {
