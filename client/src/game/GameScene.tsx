@@ -91,6 +91,15 @@ export const GameScene: React.FC = () => {
     light.groundColor = new Color3(0.2, 0.2, 0.3); // Reflexo do chão mais evidente
 
     const carController = new CarController(scene);
+
+    // CORREÇÃO: Carregar e aplicar cor customizada do carro
+    // Funciona em todos os modos: multiplayer, practice, demo
+    if (authUser?.id) {
+      const savedColor = localStorage.getItem(`carColor_${authUser.id}`) || 'blue';
+      carController.setLocalCarColor(savedColor);
+      console.log(`[GameScene] Cor do carro carregada: ${savedColor}`);
+    }
+
     const cameraRig = new CameraRig(scene);
     const ghosts = new GhostsLayer(scene, carController);
 
