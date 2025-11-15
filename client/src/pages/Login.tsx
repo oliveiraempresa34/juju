@@ -356,7 +356,7 @@ export const Login: React.FC = () => {
       {/* Info Sections */}
       <div className="login-info-section" style={{ marginTop: '48px', display: 'flex', gap: '32px', alignItems: 'center', maxWidth: '900px', margin: '48px auto 0' }}>
         <div style={{ flex: 1 }}>
-          <img src="/logo.webp" alt="Drift Multiplayer" style={{ width: '100%', borderRadius: '12px', boxShadow: '0 8px 32px rgba(65, 105, 225, 0.3)' }} />
+          <img src="/unnamed-removebg-preview.webp" alt="Drift Multiplayer" style={{ width: '100%', borderRadius: '12px', boxShadow: '0 8px 32px rgba(65, 105, 225, 0.3)' }} />
         </div>
         <div style={{ flex: 1, color: 'var(--color-text-primary)' }}>
           <h2 style={{ fontSize: '28px', fontWeight: '700', marginBottom: '16px', background: 'linear-gradient(135deg, #4169E1 0%, #6E8BFF 100%)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
@@ -370,7 +370,7 @@ export const Login: React.FC = () => {
 
       <div className="login-info-section" style={{ marginTop: '48px', display: 'flex', gap: '32px', alignItems: 'center', maxWidth: '900px', margin: '48px auto 0', flexDirection: 'row-reverse' }}>
         <div style={{ flex: 1 }}>
-          <img src="/logo.webp" alt="Sistema de Apostas" style={{ width: '100%', borderRadius: '12px', boxShadow: '0 8px 32px rgba(65, 105, 225, 0.3)' }} />
+          <img src="/unnamed-removebg-preview.webp" alt="Sistema de Apostas" style={{ width: '100%', borderRadius: '12px', boxShadow: '0 8px 32px rgba(65, 105, 225, 0.3)' }} />
         </div>
         <div style={{ flex: 1, color: 'var(--color-text-primary)' }}>
           <h2 style={{ fontSize: '28px', fontWeight: '700', marginBottom: '16px', background: 'linear-gradient(135deg, #4169E1 0%, #6E8BFF 100%)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>

@@ -7,7 +7,7 @@ export const LogoHeader: React.FC = () => {
       <div className="logo-container">
         {/* Logo Image */}
         <img
-          src={`/logo.webp?v=${import.meta.env.VITE_BUILD_VERSION || Date.now()}`}
+          src={`/unnamed-removebg-preview.webp?v=${import.meta.env.VITE_BUILD_VERSION || Date.now()}`}
           alt="Drift cash Logo"
           style={{
             width: '100%',
