@@ -1,0 +1,358 @@
+// Prisma Schema para Juju Drift Multiplayer Game
+// Database: PostgreSQL (production-ready)
+// Generator: Prisma Client para TypeScript
+
+generator client {
+  provider = "prisma-client-js"
+  // Otimizações para performance
+  previewFeatures = ["fullTextSearch", "fullTextIndex"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  // Exemplo: postgresql://user:password@localhost:5432/juju_drift?schema=public
+
+  // Para desenvolvimento local com Docker:
+  // docker run --name juju-postgres -e POSTGRES_PASSWORD=dev_password -e POSTGRES_DB=juju_drift -p 5432:5432 -d postgres:15-alpine
+}
+
+// ============================================================
+// TABELA: Users (Jogadores e Administradores)
+// ============================================================
+model User {
+  id                String            @id @default(cuid())
+  username          String            @unique @db.VarChar(50)
+  email             String            @unique @db.VarChar(255)
+  passwordHash      String            @db.VarChar(255)
+  role              UserRole          @default(USER)
+
+  // Avatar management (URL apenas, não base64)
+  avatarUrl         String?           @db.VarChar(500)
+  avatarProvider    AvatarProvider?   @default(LOCAL) // LOCAL, S3, CLOUDINARY
+
+  // Car customization
+  carColor          String            @default("#FF0000") @db.VarChar(7)
+
+  // Affiliate system
+  referralCode      String?           @unique @db.VarChar(20)
+  referredById      String?
+  referredBy        User?             @relation("UserReferrals", fields: [referredById], references: [id], onDelete: SetNull)
+  referrals         User[]            @relation("UserReferrals")
+
+  // Wallet/Balance
+  balance           Decimal           @default(0) @db.Decimal(18, 2)
+  totalDeposits     Decimal           @default(0) @db.Decimal(18, 2)
+  totalWithdrawals  Decimal           @default(0) @db.Decimal(18, 2)
+  totalWinnings     Decimal           @default(0) @db.Decimal(18, 2)
+  totalLosses       Decimal           @default(0) @db.Decimal(18, 2)
+
+  // Ban management
+  isBanned          Boolean           @default(false)
+  bannedAt          DateTime?
+  bannedBy          String?
+  banReason         String?           @db.Text
+  banExpiresAt      DateTime?
+
+  // Metadata
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+  lastLoginAt       DateTime?
+  ipAddress         String?           @db.VarChar(45) // IPv6 support
+
+  // Relações
+  transactions      WalletTransaction[]
+  payments          Payment[]
+  gameSessions      GameSession[]
+  affiliateEarnings AffiliateEarning[]
+
+  @@index([email])
+  @@index([username])
+  @@index([referralCode])
+  @@index([isBanned])
+  @@index([createdAt])
+  @@map("users")
+}
+
+enum UserRole {
+  USER
+  ADMIN
+}
+
+enum AvatarProvider {
+  LOCAL      // Desenvolvimento local (file system)
+  S3         // AWS S3 bucket
+  CLOUDINARY // Cloudinary CDN
+}
+
+// ============================================================
+// TABELA: WalletTransaction (Histórico de transações)
+// ============================================================
+model WalletTransaction {
+  id              String              @id @default(cuid())
+  userId          String
+  user            User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  type            TransactionType
+  amount          Decimal             @db.Decimal(18, 2)
+  balanceBefore   Decimal             @db.Decimal(18, 2)
+  balanceAfter    Decimal             @db.Decimal(18, 2)
+
+  description     String              @db.VarChar(255)
+  metadata        Json?               // Dados adicionais (paymentId, gameSessionId, etc)
+
+  // Referência a payment ou game session (opcional)
+  paymentId       String?
+  payment         Payment?            @relation(fields: [paymentId], references: [id], onDelete: SetNull)
+
+  gameSessionId   String?
+  gameSession     GameSession?        @relation(fields: [gameSessionId], references: [id], onDelete: SetNull)
+
+  createdAt       DateTime            @default(now())
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([type])
+  @@index([paymentId])
+  @@index([gameSessionId])
+  @@map("wallet_transactions")
+}
+
+enum TransactionType {
+  DEPOSIT           // Depósito (PIX)
+  WITHDRAWAL        // Saque
+  BET_PLACED        // Aposta realizada
+  BET_WON           // Aposta vencida
+  BET_LOST          // Aposta perdida (para tracking)
+  BET_REFUND        // Reembolso (partida cancelada)
+  AFFILIATE_COMMISSION // Comissão de afiliado
+  ADMIN_ADJUSTMENT  // Ajuste manual do admin
+}
+
+// ============================================================
+// TABELA: Payment (Depósitos e Saques)
+// ============================================================
+model Payment {
+  id                String              @id @default(cuid())
+  userId            String
+  user              User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  type              PaymentType
+  amount            Decimal             @db.Decimal(18, 2)
+  status            PaymentStatus       @default(PENDING)
+
+  // PIX data
+  pixCode           String?             @db.Text       // PIX copy-paste code
+  pixQrCode         String?             @db.Text       // QR code base64 (se necessário)
+  pixKey            String?             @db.VarChar(255) // Chave PIX do usuário (para saques)
+
+  // Transação externa (gateway de pagamento)
+  externalTransactionId String?         @unique @db.VarChar(255)
+  providerName      String?             @db.VarChar(50) // Mercado Pago, PagSeguro, etc
+
+  // Admin approval (para saques)
+  approvedBy        String?
+  approvedAt        DateTime?
+  rejectedReason    String?             @db.Text
+
+  metadata          Json?               // Dados adicionais do gateway
+
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+
+  // Relações
+  transactions      WalletTransaction[]
+
+  @@index([userId, status])
+  @@index([status, type])
+  @@index([externalTransactionId])
+  @@index([createdAt(sort: Desc)])
+  @@map("payments")
+}
+
+enum PaymentType {
+  DEPOSIT
+  WITHDRAWAL
+}
+
+enum PaymentStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+// ============================================================
+// TABELA: GameSession (Histórico de partidas)
+// ============================================================
+model GameSession {
+  id              String              @id @default(cuid())
+
+  // Room info
+  roomId          String              @db.VarChar(100)
+  roomType        RoomType
+  seed            BigInt              // Seed para geração procedural da pista
+
+  // Match configuration
+  betAmount       Decimal             @db.Decimal(18, 2)
+  prizePool       Decimal             @db.Decimal(18, 2)
+  inviteCode      String?             @db.VarChar(50)
+
+  // Match status
+  status          GameStatus          @default(WAITING)
+  startedAt       DateTime?
+  finishedAt      DateTime?
+  duration        Int?                // Duração em segundos
+
+  // Winner
+  winnerId        String?
+  winnerUsername  String?             @db.VarChar(50)
+
+  // Metadata
+  createdAt       DateTime            @default(now())
+
+  // Relações
+  players         GamePlayer[]
+  transactions    WalletTransaction[]
+
+  @@index([roomId])
+  @@index([status])
+  @@index([winnerId])
+  @@index([createdAt(sort: Desc)])
+  @@map("game_sessions")
+}
+
+enum RoomType {
+  PUBLIC
+  PRIVATE
+}
+
+enum GameStatus {
+  WAITING
+  LOADING
+  COUNTDOWN
+  ACTIVE
+  FINISHED
+  CANCELLED
+}
+
+// ============================================================
+// TABELA: GamePlayer (Jogadores em cada partida)
+// ============================================================
+model GamePlayer {
+  id              String              @id @default(cuid())
+
+  gameSessionId   String
+  gameSession     GameSession         @relation(fields: [gameSessionId], references: [id], onDelete: Cascade)
+
+  userId          String
+  platformId      String              @db.VarChar(100) // Colyseus sessionId
+  username        String              @db.VarChar(50)
+
+  // Game stats
+  distance        Decimal             @default(0) @db.Decimal(10, 2)
+  timeAlive       Int                 @default(0) // Segundos
+  score           Int                 @default(0)
+  eliminated      Boolean             @default(false)
+  eliminatedAt    DateTime?
+
+  // Bet
+  betAmount       Decimal             @db.Decimal(18, 2)
+  isWinner        Boolean             @default(false)
+  prizeWon        Decimal             @default(0) @db.Decimal(18, 2)
+
+  // Host info (para rooms privadas)
+  isHost          Boolean             @default(false)
+
+  joinedAt        DateTime            @default(now())
+
+  @@unique([gameSessionId, platformId])
+  @@index([userId])
+  @@index([gameSessionId])
+  @@map("game_players")
+}
+
+// ============================================================
+// TABELA: AffiliateEarning (Comissões de afiliados)
+// ============================================================
+model AffiliateEarning {
+  id              String              @id @default(cuid())
+
+  userId          String
+  user            User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  fromUserId      String              // Quem gerou a comissão
+  fromUsername    String              @db.VarChar(50)
+
+  level           Int                 // Nível de afiliação (1, 2, 3...)
+  percentage      Decimal             @db.Decimal(5, 2) // Ex: 5.00 = 5%
+
+  baseAmount      Decimal             @db.Decimal(18, 2) // Valor base (aposta/depósito)
+  commission      Decimal             @db.Decimal(18, 2) // Comissão calculada
+
+  type            AffiliateEarningType
+  referenceId     String?             @db.VarChar(100) // GameSessionId ou PaymentId
+
+  createdAt       DateTime            @default(now())
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([fromUserId])
+  @@map("affiliate_earnings")
+}
+
+enum AffiliateEarningType {
+  GAME_BET        // Comissão de aposta
+  DEPOSIT         // Comissão de depósito
+  BONUS           // Bônus especial
+}
+
+// ============================================================
+// TABELA: Settings (Configurações do sistema)
+// ============================================================
+model Setting {
+  id              String              @id @default(cuid())
+  key             String              @unique @db.VarChar(100)
+  value           Json                // Permite armazenar qualquer tipo de valor
+
+  description     String?             @db.Text
+  updatedBy       String?             @db.VarChar(50)
+
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+
+  @@index([key])
+  @@map("settings")
+}
+
+// ============================================================
+// TABELA: BanHistory (Histórico de banimentos)
+// ============================================================
+model BanHistory {
+  id              String              @id @default(cuid())
+
+  userId          String              @db.VarChar(50)
+  username        String              @db.VarChar(50)
+
+  bannedBy        String              @db.VarChar(50)
+  reason          String              @db.Text
+
+  bannedAt        DateTime            @default(now())
+  expiresAt       DateTime?
+  unbannedAt      DateTime?
+  unbannedBy      String?             @db.VarChar(50)
+
+  @@index([userId])
+  @@index([bannedAt(sort: Desc)])
+  @@map("ban_history")
+}
+
+// ============================================================
+// ÍNDICES ADICIONAIS PARA PERFORMANCE
+// ============================================================
+
+// Índices compostos para queries frequentes:
+// - Ranking de jogadores: User.totalWinnings + User.createdAt
+// - Histórico de transações: WalletTransaction.userId + createdAt
+// - Payments pendentes: Payment.status + Payment.type
+// - Game sessions recentes: GameSession.createdAt + GameSession.status
