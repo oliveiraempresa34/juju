@@ -91,6 +91,13 @@ export const GameScene: React.FC = () => {
     light.groundColor = new Color3(0.2, 0.2, 0.3); // Reflexo do chão mais evidente
 
     const carController = new CarController(scene);
+
+    // Aplicar cor salva do jogador
+    if (authUser?.id) {
+      const savedColor = localStorage.getItem(`carColor_${authUser.id}`) || 'blue';
+      carController.setLocalCarColor(savedColor);
+    }
+
     const cameraRig = new CameraRig(scene);
     const ghosts = new GhostsLayer(scene, carController);
 

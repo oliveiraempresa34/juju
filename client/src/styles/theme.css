@@ -656,11 +656,13 @@ select:focus {
   width: min(520px, 100%);
   padding: var(--spacing-5);
   border-radius: 18px;
-  border: 1px solid rgba(34, 48, 86, 0.9);
-  box-shadow: var(--shadow-card-strong);
+  border: none;
+  background: transparent !important;
+  box-shadow: none;
   position: relative;
   overflow: visible;
   margin: var(--spacing-5) auto;
+  z-index: 10;
 }
 
 .login-card::-webkit-scrollbar {
@@ -712,12 +714,7 @@ select:focus {
 }
 
 .login-card::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background: radial-gradient(circle at 0% 0%, rgba(110, 139, 255, 0.22), transparent 55%);
-  opacity: 0.6;
+  content: none;
 }
 
 .login-card__content {
@@ -781,6 +778,11 @@ select:focus {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--spacing-3);
+}
+
+.login-features-container {
+  position: relative;
+  z-index: 10;
 }
 
 .login-feature {
@@ -1571,7 +1573,7 @@ select:focus {
   align-items: center;
   justify-content: center;
   overflow: visible;
-  z-index: 1;
+  z-index: 5;
 }
 
 .logo-placeholder {

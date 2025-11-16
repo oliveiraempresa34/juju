@@ -376,6 +376,11 @@ export class CarController {
     windshield.material = glassMaterial;
 
     this.cars.set(id, carGroup);
+
+    // Aplicar cor e transparência inicial
+    const isLocal = id === this.localId;
+    this.updateCarColor(carGroup, isLocal ? this.localCarColor : ghostColor, isLocal);
+
     return carGroup;
   }
 
